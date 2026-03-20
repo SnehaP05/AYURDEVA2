@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import joblib, json, os
+import joblib, json, os, requests
 from datetime import datetime
 from fpdf import FPDF
 from dosha_engine import (identify_dosha, get_dosha_for_disease,
@@ -26,9 +26,50 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ── Google Drive file IDs ──────────────────────────────────
+# INSTRUCTIONS:
+# 1. Upload each .pkl and .json file to Google Drive
+# 2. Right-click each file → Share → Anyone with the link
+# 3. Copy the File ID from the link and paste below
+# Link format: https://drive.google.com/file/d/FILE_ID_HERE/view
+# ──────────────────────────────────────────────────────────
+DRIVE_FILES = {
+    'disease_model.pkl':    'PASTE_FILE_ID_HERE',
+    'scaler.pkl':           'PASTE_FILE_ID_HERE',
+    'le_gender.pkl':        'PASTE_FILE_ID_HERE',
+    'le_disease.pkl':       'PASTE_FILE_ID_HERE',
+    'disease_classes.json': 'PASTE_FILE_ID_HERE',
+    'feature_cols.json':    'PASTE_FILE_ID_HERE',
+}
+
+def download_from_drive(file_id, dest_path):
+    """Download a file from Google Drive by file ID."""
+    if os.path.exists(dest_path):
+        return  # already downloaded this session
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    session = requests.Session()
+    response = session.get(url, stream=True)
+    # Handle large file confirmation token
+    for key, value in response.cookies.items():
+        if key.startswith('download_warning'):
+            url = f"https://drive.google.com/uc?export=download&confirm={value}&id={file_id}"
+            response = session.get(url, stream=True)
+            break
+    with open(dest_path, 'wb') as f:
+        for chunk in response.iter_content(32768):
+            if chunk:
+                f.write(chunk)
+
 @st.cache_resource
 def load_model():
     try:
+        # Download all files from Google Drive if not present
+        all_ids_set = all(v != 'PASTE_FILE_ID_HERE' for v in DRIVE_FILES.values())
+        if all_ids_set:
+            with st.spinner("Loading model files from Google Drive..."):
+                for fname, fid in DRIVE_FILES.items():
+                    download_from_drive(fid, fname)
+        # Load model
         model      = joblib.load('disease_model.pkl')
         scaler     = joblib.load('scaler.pkl')
         le_gender  = joblib.load('le_gender.pkl')
@@ -43,7 +84,8 @@ def load_model():
                          'Thyroid','Smoking','Asthma','Stress',
                          'Fatigue','JointPain','Headache','Nausea','SkinIssue']
         return model, scaler, le_gender, le_disease, classes, feat_cols
-    except FileNotFoundError:
+    except Exception as e:
+        st.error(f"Error loading model: {e}")
         return None, None, None, None, None, None
 
 model, scaler, le_gender, le_disease, disease_classes, FEATURE_COLS = load_model()
@@ -268,49 +310,112 @@ if predict_btn:
     st.header("Health Report")
 
     def generate_pdf():
+        from io import BytesIO
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font("Helvetica","B",20)
-        pdf.cell(0,12,"AyurHealth AI — Personal Health Report",ln=True,align='C')
-        pdf.set_font("Helvetica","",11)
-        pdf.cell(0,8,f"Generated: {datetime.now().strftime('%d %b %Y, %H:%M')}",ln=True,align='C')
-        pdf.ln(4)
+
+        def safe(text):
+            # Remove characters that FPDF cannot encode
+            return str(text).encode('latin-1', 'replace').decode('latin-1')
+
         def section(t):
-            pdf.set_fill_color(45,106,79); pdf.set_text_color(255,255,255)
-            pdf.set_font("Helvetica","B",13)
-            pdf.cell(0,9,f"  {t}",ln=True,fill=True)
-            pdf.set_text_color(0,0,0); pdf.set_font("Helvetica","",11); pdf.ln(2)
-        def row(l,v):
-            pdf.set_font("Helvetica","B",11); pdf.cell(60,8,l+":",ln=False)
-            pdf.set_font("Helvetica","",11); pdf.cell(0,8,str(v),ln=True)
-        section("Patient Information")
-        row("Name",name or "Not provided"); row("Age",f"{age} years")
-        row("Gender",gender); row("Location",location); pdf.ln(3)
-        section("Clinical Measurements")
-        row("BMI",f"{bmi} kg/m2"); row("BP",f"{bp} mmHg")
-        row("Sugar",f"{sugar} mg/dL"); row("Cholesterol",f"{cholesterol} mg/dL")
-        row("Stress",f"{stress}/10"); pdf.ln(3)
-        section("Medical History and Symptoms")
-        row("Thyroid","Yes" if thyroid else "No"); row("Smoker","Yes" if smoking else "No")
-        row("Asthma","Yes" if asthma else "No"); row("Fatigue","Yes" if fatigue else "No")
-        row("Joint Pain","Yes" if joint_pain else "No"); row("Headache","Yes" if headache else "No")
-        row("Nausea","Yes" if nausea else "No"); row("Skin Issues","Yes" if skin_issue else "No"); pdf.ln(3)
-        section("Prediction"); row("Disease",predicted_disease); row("Confidence",f"{confidence:.1f}%"); row("Dosha",final_dosha); pdf.ln(3)
-        section("Herbs")
-        for h in recommendation['herbs']: pdf.multi_cell(0,7,f"  * {h}")
-        pdf.ln(2); section("Remedy"); pdf.multi_cell(0,7,recommendation['remedy']); pdf.ln(2)
-        section("Diet")
-        for t in recommendation['diet']: pdf.multi_cell(0,7,f"  * {t}")
-        pdf.ln(2); section("Yoga")
-        for p in recommendation['yoga']: pdf.multi_cell(0,7,f"  * {p}")
-        pdf.ln(2); section("Lifestyle")
-        for t in recommendation['lifestyle']: pdf.multi_cell(0,7,f"  * {t}")
+            pdf.set_fill_color(45, 106, 79)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "B", 13)
+            pdf.cell(0, 9, safe(f"  {t}"), new_x="LMARGIN", new_y="NEXT", fill=True)
+            pdf.set_text_color(0, 0, 0)
+            pdf.set_font("Helvetica", "", 11)
+            pdf.ln(2)
+
+        def row(label, value):
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(60, 8, safe(label + ":"), new_x="RIGHT", new_y="TOP")
+            pdf.set_font("Helvetica", "", 11)
+            pdf.cell(0, 8, safe(str(value)), new_x="LMARGIN", new_y="NEXT")
+
+        # Title
+        pdf.set_font("Helvetica", "B", 20)
+        pdf.cell(0, 12, "AyurHealth AI - Personal Health Report",
+                 new_x="LMARGIN", new_y="NEXT", align='C')
+        pdf.set_font("Helvetica", "", 11)
+        pdf.cell(0, 8, f"Generated: {datetime.now().strftime('%d %b %Y, %H:%M')}",
+                 new_x="LMARGIN", new_y="NEXT", align='C')
         pdf.ln(4)
-        pdf.set_font("Helvetica","BI",14); pdf.set_text_color(45,106,79)
-        pdf.cell(0,12,"Stay healthy, be happy, take care!",ln=True,align='C')
-        pdf.set_font("Helvetica","I",9); pdf.set_text_color(128,128,128)
-        pdf.cell(0,8,"Disclaimer: AI-generated for informational purposes only.",ln=True,align='C')
-        return bytes(pdf.output())
+
+        section("Patient Information")
+        row("Name",     name or "Not provided")
+        row("Age",      f"{age} years")
+        row("Gender",   gender)
+        row("Location", location)
+        pdf.ln(3)
+
+        section("Clinical Measurements")
+        row("BMI",          f"{bmi} kg/m2")
+        row("Blood Pressure", f"{bp} mmHg")
+        row("Blood Sugar",  f"{sugar} mg/dL")
+        row("Cholesterol",  f"{cholesterol} mg/dL")
+        row("Stress Level", f"{stress}/10")
+        pdf.ln(3)
+
+        section("Medical History and Symptoms")
+        row("Thyroid condition", "Yes" if thyroid else "No")
+        row("Smoker",            "Yes" if smoking else "No")
+        row("Asthma",            "Yes" if asthma else "No")
+        row("Fatigue",           "Yes" if fatigue else "No")
+        row("Joint Pain",        "Yes" if joint_pain else "No")
+        row("Headache",          "Yes" if headache else "No")
+        row("Nausea",            "Yes" if nausea else "No")
+        row("Skin Issues",       "Yes" if skin_issue else "No")
+        pdf.ln(3)
+
+        section("Prediction Results")
+        row("Disease",    predicted_disease)
+        row("Confidence", f"{confidence:.1f}%")
+        row("Dosha",      final_dosha)
+        pdf.ln(3)
+
+        section("Recommended Herbs")
+        for h in recommendation['herbs']:
+            pdf.set_font("Helvetica", "", 11)
+            pdf.multi_cell(0, 7, safe(f"  * {h}"))
+        pdf.ln(2)
+
+        section("Remedy Preparation")
+        pdf.set_font("Helvetica", "", 11)
+        pdf.multi_cell(0, 7, safe(recommendation['remedy']))
+        pdf.ln(2)
+
+        section("Diet Plan")
+        for t in recommendation['diet']:
+            pdf.set_font("Helvetica", "", 11)
+            pdf.multi_cell(0, 7, safe(f"  * {t}"))
+        pdf.ln(2)
+
+        section("Yoga and Exercise")
+        for p in recommendation['yoga']:
+            pdf.set_font("Helvetica", "", 11)
+            pdf.multi_cell(0, 7, safe(f"  * {p}"))
+        pdf.ln(2)
+
+        section("Lifestyle Tips")
+        for t in recommendation['lifestyle']:
+            pdf.set_font("Helvetica", "", 11)
+            pdf.multi_cell(0, 7, safe(f"  * {t}"))
+        pdf.ln(4)
+
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(45, 106, 79)
+        pdf.cell(0, 12, "Stay healthy, be happy, take care!",
+                 new_x="LMARGIN", new_y="NEXT", align='C')
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.set_text_color(128, 128, 128)
+        pdf.cell(0, 8, "Disclaimer: AI-generated for informational purposes only.",
+                 new_x="LMARGIN", new_y="NEXT", align='C')
+
+        # Compatible output for both fpdf and fpdf2
+        buf = BytesIO()
+        buf.write(pdf.output())
+        return buf.getvalue()
 
     if st.button("Generate PDF Health Report", use_container_width=True):
         with st.spinner("Generating..."):

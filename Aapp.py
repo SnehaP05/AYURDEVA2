@@ -132,6 +132,65 @@ if predict_btn:
     recommendation = get_recommendation(predicted_disease)
     dosha_info     = DOSHA_INFO[final_dosha]
 
+    # Save everything to session_state so results survive button clicks
+    st.session_state['predicted'] = True
+    st.session_state['result'] = {
+        'predicted_disease': predicted_disease,
+        'confidence':        confidence,
+        'top5':              top5,
+        'dosha_scores':      dosha_scores,
+        'final_dosha':       final_dosha,
+        'recommendation':    recommendation,
+        'dosha_info':        dosha_info,
+        'name':              name,
+        'age':               age,
+        'gender':            gender,
+        'location':          location,
+        'bmi':               bmi,
+        'bp':                bp,
+        'sugar':             sugar,
+        'cholesterol':       cholesterol,
+        'stress':            stress,
+        'thyroid':           thyroid,
+        'smoking':           smoking,
+        'asthma':            asthma,
+        'fatigue':           fatigue,
+        'joint_pain':        joint_pain,
+        'headache':          headache,
+        'nausea':            nausea,
+        'skin_issue':        skin_issue,
+        'symptoms':          symptoms,
+    }
+
+# Show results if prediction has been made (persists across button clicks)
+if st.session_state.get('predicted'):
+    r = st.session_state['result']
+    predicted_disease = r['predicted_disease']
+    confidence        = r['confidence']
+    top5              = r['top5']
+    dosha_scores      = r['dosha_scores']
+    final_dosha       = r['final_dosha']
+    recommendation    = r['recommendation']
+    dosha_info        = r['dosha_info']
+    name              = r['name']
+    age               = r['age']
+    gender            = r['gender']
+    location          = r['location']
+    bmi               = r['bmi']
+    bp                = r['bp']
+    sugar             = r['sugar']
+    cholesterol       = r['cholesterol']
+    stress            = r['stress']
+    thyroid           = r['thyroid']
+    smoking           = r['smoking']
+    asthma            = r['asthma']
+    fatigue           = r['fatigue']
+    joint_pain        = r['joint_pain']
+    headache          = r['headache']
+    nausea            = r['nausea']
+    skin_issue        = r['skin_issue']
+    symptoms          = r['symptoms']
+
     # ── Results ─────────────────────────────────────────
     st.header("Prediction Results")
     c1, c2, c3 = st.columns(3)
@@ -443,21 +502,25 @@ if predict_btn:
         doc.build(story)
         return buf.getvalue()
 
+    # Generate PDF and store in session_state so it survives re-runs
     if st.button("Generate PDF Health Report", use_container_width=True):
         with st.spinner("Generating your report..."):
             try:
-                pdf_bytes = generate_pdf()
-                st.download_button(
-                    label="Download PDF",
-                    data=pdf_bytes,
-                    file_name=f"AyurHealth_{name or 'Report'}_{datetime.now().strftime('%Y%m%d')}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-
-                st.success("PDF ready! Click Download PDF above.")
+                st.session_state['pdf_bytes'] = generate_pdf()
+                st.session_state['pdf_name']  = f"AyurHealth_{name or 'Report'}_{datetime.now().strftime('%Y%m%d')}.pdf"
+                st.success("PDF ready! Click the download button below.")
             except Exception as e:
-                st.error(f"PDF error: {e}")
+                st.error(f"PDF generation failed: {e}")
+
+    # Show download button if PDF was generated
+    if 'pdf_bytes' in st.session_state:
+        st.download_button(
+            label="⬇️ Download PDF Report",
+            data=st.session_state['pdf_bytes'],
+            file_name=st.session_state.get('pdf_name', 'AyurHealth_Report.pdf'),
+            mime="application/pdf",
+            use_container_width=True
+        )
 
     st.markdown("""
     <div class="wellness">
@@ -469,36 +532,37 @@ if predict_btn:
 
     st.caption("Disclaimer: For educational purposes only. Always consult a certified medical professional.")
 
-# ── Landing page (before prediction) ─────────────────────
+# ── Landing page (before any prediction) ─────────────────
 else:
-    st.info("Fill in your details in the sidebar and click Predict and Recommend")
+    if not st.session_state.get('predicted'):
+        st.info("Fill in your details in the sidebar and click Predict and Recommend")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Diseases",  "10 conditions")
-    c2.metric("Model",     "XGBoost")
-    c3.metric("Doshas",    "Vata / Pitta / Kapha")
-    c4.metric("Report",    "PDF download")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Diseases",  "10 conditions")
+        c2.metric("Model",     "XGBoost")
+        c3.metric("Doshas",    "Vata / Pitta / Kapha")
+        c4.metric("Report",    "PDF download")
 
-    st.markdown("""
-    ### 10 Diseases Covered
-    | Disease | Key Indicators |
-    |---|---|
-    | Diabetes | High sugar, high BMI |
-    | Hypertension | High BP, older age, stress |
-    | Asthma | Asthma flag, smoking, fatigue |
-    | Thyroid Disorder | Thyroid flag, fatigue, skin issues |
-    | Anxiety Disorder | High stress, headache, nausea |
-    | Obesity | Very high BMI, fatigue, joint pain |
-    | Anemia | Low BMI, fatigue, female skew |
-    | GERD | High BMI, stress, nausea |
-    | Migraine | High stress, headache, female skew |
-    | Arthritis | Older age, high BMI, joint pain |
-    """)
+        st.markdown("""
+        ### 10 Diseases Covered
+        | Disease | Key Indicators |
+        |---|---|
+        | Diabetes | High sugar, high BMI |
+        | Hypertension | High BP, older age, stress |
+        | Asthma | Asthma flag, smoking, fatigue |
+        | Thyroid Disorder | Thyroid flag, fatigue, skin issues |
+        | Anxiety Disorder | High stress, headache, nausea |
+        | Obesity | Very high BMI, fatigue, joint pain |
+        | Anemia | Low BMI, fatigue, female skew |
+        | GERD | High BMI, stress, nausea |
+        | Migraine | High stress, headache, female skew |
+        | Arthritis | Older age, high BMI, joint pain |
+        """)
 
-    if model is None:
-        st.warning(
-            "Model files not found. "
-            "Make sure these files are uploaded to your GitHub repo: "
-            "disease_model.pkl, scaler.pkl, le_gender.pkl, "
-            "le_disease.pkl, disease_classes.json, feature_cols.json"
-        )
+        if model is None:
+            st.warning(
+                "Model files not found. "
+                "Make sure these files are uploaded to your GitHub repo: "
+                "disease_model.pkl, scaler.pkl, le_gender.pkl, "
+                "le_disease.pkl, disease_classes.json, feature_cols.json"
+            )

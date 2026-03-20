@@ -1,12 +1,13 @@
 # ============================================================
-# AyurHealth AI — Streamlit App (10 Diseases, Checkbox Inputs)
+# AyurHealth AI - Streamlit App (10 Diseases)
 # ============================================================
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import joblib, json, os, requests
+import joblib, json, os
+from io import BytesIO
 from datetime import datetime
 from fpdf import FPDF
 from dosha_engine import (identify_dosha, get_dosha_for_disease,
@@ -26,50 +27,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── Google Drive file IDs ──────────────────────────────────
-# INSTRUCTIONS:
-# 1. Upload each .pkl and .json file to Google Drive
-# 2. Right-click each file → Share → Anyone with the link
-# 3. Copy the File ID from the link and paste below
-# Link format: https://drive.google.com/file/d/FILE_ID_HERE/view
-# ──────────────────────────────────────────────────────────
-DRIVE_FILES = {
-    'disease_model.pkl':    'PASTE_FILE_ID_HERE',
-    'scaler.pkl':           'PASTE_FILE_ID_HERE',
-    'le_gender.pkl':        'PASTE_FILE_ID_HERE',
-    'le_disease.pkl':       'PASTE_FILE_ID_HERE',
-    'disease_classes.json': 'PASTE_FILE_ID_HERE',
-    'feature_cols.json':    'PASTE_FILE_ID_HERE',
-}
-
-def download_from_drive(file_id, dest_path):
-    """Download a file from Google Drive by file ID."""
-    if os.path.exists(dest_path):
-        return  # already downloaded this session
-    url = f"https://drive.google.com/uc?export=download&id={file_id}"
-    session = requests.Session()
-    response = session.get(url, stream=True)
-    # Handle large file confirmation token
-    for key, value in response.cookies.items():
-        if key.startswith('download_warning'):
-            url = f"https://drive.google.com/uc?export=download&confirm={value}&id={file_id}"
-            response = session.get(url, stream=True)
-            break
-    with open(dest_path, 'wb') as f:
-        for chunk in response.iter_content(32768):
-            if chunk:
-                f.write(chunk)
-
 @st.cache_resource
 def load_model():
     try:
-        # Download all files from Google Drive if not present
-        all_ids_set = all(v != 'PASTE_FILE_ID_HERE' for v in DRIVE_FILES.values())
-        if all_ids_set:
-            with st.spinner("Loading model files from Google Drive..."):
-                for fname, fid in DRIVE_FILES.items():
-                    download_from_drive(fid, fname)
-        # Load model
         model      = joblib.load('disease_model.pkl')
         scaler     = joblib.load('scaler.pkl')
         le_gender  = joblib.load('le_gender.pkl')
@@ -85,18 +45,19 @@ def load_model():
                          'Fatigue','JointPain','Headache','Nausea','SkinIssue']
         return model, scaler, le_gender, le_disease, classes, feat_cols
     except Exception as e:
-        st.error(f"Error loading model: {e}")
         return None, None, None, None, None, None
 
 model, scaler, le_gender, le_disease, disease_classes, FEATURE_COLS = load_model()
 
+# ── Header ────────────────────────────────────────────────
 st.markdown('<div class="main-title">🌿 AyurHealth AI</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-title">Ancient Ayurvedic Wisdom · XGBoost AI · 10 Diseases</div>', unsafe_allow_html=True)
 st.divider()
 
+# ── Sidebar ───────────────────────────────────────────────
 with st.sidebar:
-    st.header("👤 Patient Details")
-    name   = st.text_input("Full Name", placeholder="Enter your name")
+    st.header("Patient Details")
+    name = st.text_input("Full Name", placeholder="Enter your name")
     col1, col2 = st.columns(2)
     with col1:
         gender = st.selectbox("Gender", ["Male", "Female"])
@@ -109,8 +70,8 @@ with st.sidebar:
     ])
 
     st.divider()
-    st.subheader("🩺 Clinical Measurements")
-    bmi         = st.slider("BMI",                   10.0, 50.0, 24.0, step=0.1)
+    st.subheader("Clinical Measurements")
+    bmi         = st.slider("BMI",                  10.0, 50.0, 24.0, step=0.1)
     bp          = st.slider("Blood Pressure (mmHg)",  80,   210,  120)
     sugar       = st.slider("Blood Sugar (mg/dL)",     70,   380,  100)
     cholesterol = st.slider("Cholesterol (mg/dL)",    100,   310,  180)
@@ -139,9 +100,10 @@ with st.sidebar:
     predict_btn = st.button("Predict and Recommend",
                              use_container_width=True, type="primary")
 
+# ── Prediction ────────────────────────────────────────────
 if predict_btn:
     if model is None:
-        st.error("Model files not found! Upload all .pkl and .json files to GitHub.")
+        st.error("Model files not found. Make sure all .pkl and .json files are in your GitHub repo.")
         st.stop()
 
     gender_enc = le_gender.transform([gender])[0]
@@ -165,6 +127,7 @@ if predict_btn:
     recommendation = get_recommendation(predicted_disease)
     dosha_info     = DOSHA_INFO[final_dosha]
 
+    # ── Results ─────────────────────────────────────────
     st.header("Prediction Results")
     c1, c2, c3 = st.columns(3)
 
@@ -173,14 +136,15 @@ if predict_btn:
         <div class="disease-box">
             <h2 style='color:#C0392B'>⚠️ {predicted_disease}</h2>
             <p style='font-size:1.1rem'>Confidence: <b>{confidence:.1f}%</b></p>
-            <p style='color:#888;font-size:0.8rem'>AI prediction — not a medical diagnosis</p>
+            <p style='color:#888;font-size:0.8rem'>AI prediction - not a medical diagnosis</p>
         </div>""", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("**Your Selected Symptoms:**")
         symptom_map = {
-            "Fatigue": fatigue, "Joint Pain": joint_pain, "Headache": headache,
-            "Nausea": nausea, "Skin Issue": skin_issue,
-            "Thyroid": thyroid, "Smoker": smoking, "Asthma": asthma
+            "Fatigue": fatigue, "Joint Pain": joint_pain,
+            "Headache": headache, "Nausea": nausea,
+            "Skin Issue": skin_issue, "Thyroid": thyroid,
+            "Smoker": smoking, "Asthma": asthma
         }
         active = [k for k, v in symptom_map.items() if v]
         if active:
@@ -203,6 +167,7 @@ if predict_btn:
         for disease, prob in top5:
             st.progress(int(prob), text=f"{disease} — {prob:.1f}%")
 
+    # ── Charts ───────────────────────────────────────────
     st.divider()
     cd1, cd2 = st.columns(2)
     with cd1:
@@ -220,8 +185,9 @@ if predict_btn:
     with cd2:
         st.subheader("Prediction Confidence")
         fig_bar = px.bar(
-            x=[p for _,p in top5], y=[d for d,_ in top5], orientation='h',
-            color=[p for _,p in top5], color_continuous_scale='Greens',
+            x=[p for _,p in top5], y=[d for d,_ in top5],
+            orientation='h', color=[p for _,p in top5],
+            color_continuous_scale='Greens',
             labels={'x':'Probability (%)','y':''}
         )
         fig_bar.update_layout(height=300, showlegend=False,
@@ -229,16 +195,20 @@ if predict_btn:
                                margin=dict(l=10,r=10,t=10,b=10))
         st.plotly_chart(fig_bar, use_container_width=True)
 
+    # ── Recommendations ──────────────────────────────────
     st.divider()
     st.header("Personalised Ayurvedic Recommendations")
-    tab1, tab2, tab3, tab4 = st.tabs(["Herbs and Remedy","Diet Plan","Yoga and Exercise","Lifestyle"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Herbs and Remedy", "Diet Plan", "Yoga and Exercise", "Lifestyle"
+    ])
 
     with tab1:
         h1, h2 = st.columns(2)
         with h1:
             st.subheader("Recommended Herbs")
             for herb in recommendation['herbs']:
-                st.markdown(f"<div class='herb-item'>🌿 {herb}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='herb-item'>🌿 {herb}</div>",
+                            unsafe_allow_html=True)
         with h2:
             st.subheader("Organic Remedy")
             st.info(recommendation['remedy'])
@@ -257,8 +227,9 @@ if predict_btn:
         for tip in recommendation['lifestyle']:
             st.markdown(f"🌙 {tip}")
 
+    # ── Location Analysis ────────────────────────────────
     st.divider()
-    st.header(f"Location Analysis — {location}")
+    st.header(f"Location Analysis - {location}")
 
     prevalence_data = {
         'Mumbai':    {'Diabetes':22,'Hypertension':28,'Asthma':18,'Thyroid Disorder':15,'Obesity':12,'Others':5},
@@ -268,15 +239,20 @@ if predict_btn:
         'Bangalore': {'Diabetes':22,'Hypertension':20,'Anxiety Disorder':18,'Thyroid Disorder':20,'GERD':14,'Others':6},
         'Hyderabad': {'Diabetes':28,'Hypertension':22,'Obesity':15,'Thyroid Disorder':18,'GERD':12,'Others':5},
         'Pune':      {'Diabetes':20,'Hypertension':20,'Anxiety Disorder':20,'GERD':18,'Thyroid Disorder':16,'Others':6},
+        'Ahmedabad': {'Diabetes':26,'Hypertension':24,'Asthma':16,'Thyroid Disorder':18,'Obesity':12,'Others':4},
+        'Jaipur':    {'Diabetes':24,'Hypertension':26,'Asthma':14,'Thyroid Disorder':18,'Arthritis':12,'Others':6},
+        'Lucknow':   {'Diabetes':23,'Hypertension':25,'Asthma':18,'Thyroid Disorder':16,'Anemia':12,'Others':6},
         'Other':     {'Diabetes':22,'Hypertension':22,'Asthma':18,'Thyroid Disorder':18,'Others':20},
     }
     prev = prevalence_data.get(location, prevalence_data['Other'])
 
     lc1, lc2 = st.columns(2)
     with lc1:
-        fig_pie = px.pie(names=list(prev.keys()), values=list(prev.values()),
-                         title=f"Disease Prevalence in {location}",
-                         color_discrete_sequence=px.colors.sequential.Greens_r)
+        fig_pie = px.pie(
+            names=list(prev.keys()), values=list(prev.values()),
+            title=f"Disease Prevalence in {location}",
+            color_discrete_sequence=px.colors.sequential.Greens_r
+        )
         fig_pie.update_layout(height=350)
         st.plotly_chart(fig_pie, use_container_width=True)
     with lc2:
@@ -284,8 +260,12 @@ if predict_btn:
         for disease, pct in prev.items():
             st.metric(label=disease, value=f"{pct}%")
         if predicted_disease in prev:
-            st.warning(f"⚠️ {prev[predicted_disease]}% of people in {location} are affected by {predicted_disease}.")
+            st.warning(
+                f"⚠️ {prev[predicted_disease]}% of people in "
+                f"{location} are affected by {predicted_disease}."
+            )
 
+    # ── Age vs Disease ───────────────────────────────────
     st.divider()
     st.subheader("Age vs Disease Prevalence")
     age_labels = ['18-25','25-35','35-45','45-55','55-65','65-75']
@@ -306,39 +286,41 @@ if predict_btn:
     fig_age.update_layout(height=380)
     st.plotly_chart(fig_age, use_container_width=True)
 
+    # ── PDF Report ───────────────────────────────────────
     st.divider()
     st.header("Health Report")
 
     def generate_pdf():
-        from io import BytesIO
         pdf = FPDF()
         pdf.add_page()
 
         def safe(text):
-            # Remove characters that FPDF cannot encode
             return str(text).encode('latin-1', 'replace').decode('latin-1')
 
         def section(t):
             pdf.set_fill_color(45, 106, 79)
             pdf.set_text_color(255, 255, 255)
             pdf.set_font("Helvetica", "B", 13)
-            pdf.cell(0, 9, safe(f"  {t}"), new_x="LMARGIN", new_y="NEXT", fill=True)
+            pdf.cell(0, 9, safe(f"  {t}"),
+                     new_x="LMARGIN", new_y="NEXT", fill=True)
             pdf.set_text_color(0, 0, 0)
             pdf.set_font("Helvetica", "", 11)
             pdf.ln(2)
 
         def row(label, value):
             pdf.set_font("Helvetica", "B", 11)
-            pdf.cell(60, 8, safe(label + ":"), new_x="RIGHT", new_y="TOP")
+            pdf.cell(65, 8, safe(label + ":"),
+                     new_x="RIGHT", new_y="TOP")
             pdf.set_font("Helvetica", "", 11)
-            pdf.cell(0, 8, safe(str(value)), new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 8, safe(str(value)),
+                     new_x="LMARGIN", new_y="NEXT")
 
-        # Title
         pdf.set_font("Helvetica", "B", 20)
         pdf.cell(0, 12, "AyurHealth AI - Personal Health Report",
                  new_x="LMARGIN", new_y="NEXT", align='C')
         pdf.set_font("Helvetica", "", 11)
-        pdf.cell(0, 8, f"Generated: {datetime.now().strftime('%d %b %Y, %H:%M')}",
+        pdf.cell(0, 8,
+                 f"Generated: {datetime.now().strftime('%d %b %Y, %H:%M')}",
                  new_x="LMARGIN", new_y="NEXT", align='C')
         pdf.ln(4)
 
@@ -350,28 +332,28 @@ if predict_btn:
         pdf.ln(3)
 
         section("Clinical Measurements")
-        row("BMI",          f"{bmi} kg/m2")
+        row("BMI",            f"{bmi} kg/m2")
         row("Blood Pressure", f"{bp} mmHg")
-        row("Blood Sugar",  f"{sugar} mg/dL")
-        row("Cholesterol",  f"{cholesterol} mg/dL")
-        row("Stress Level", f"{stress}/10")
+        row("Blood Sugar",    f"{sugar} mg/dL")
+        row("Cholesterol",    f"{cholesterol} mg/dL")
+        row("Stress Level",   f"{stress}/10")
         pdf.ln(3)
 
         section("Medical History and Symptoms")
-        row("Thyroid condition", "Yes" if thyroid else "No")
-        row("Smoker",            "Yes" if smoking else "No")
-        row("Asthma",            "Yes" if asthma else "No")
-        row("Fatigue",           "Yes" if fatigue else "No")
+        row("Thyroid condition", "Yes" if thyroid    else "No")
+        row("Smoker",            "Yes" if smoking    else "No")
+        row("Asthma",            "Yes" if asthma     else "No")
+        row("Fatigue",           "Yes" if fatigue    else "No")
         row("Joint Pain",        "Yes" if joint_pain else "No")
-        row("Headache",          "Yes" if headache else "No")
-        row("Nausea",            "Yes" if nausea else "No")
+        row("Headache",          "Yes" if headache   else "No")
+        row("Nausea",            "Yes" if nausea     else "No")
         row("Skin Issues",       "Yes" if skin_issue else "No")
         pdf.ln(3)
 
         section("Prediction Results")
-        row("Disease",    predicted_disease)
-        row("Confidence", f"{confidence:.1f}%")
-        row("Dosha",      final_dosha)
+        row("Predicted Disease", predicted_disease)
+        row("Confidence",        f"{confidence:.1f}%")
+        row("Dominant Dosha",    final_dosha)
         pdf.ln(3)
 
         section("Recommended Herbs")
@@ -412,34 +394,45 @@ if predict_btn:
         pdf.cell(0, 8, "Disclaimer: AI-generated for informational purposes only.",
                  new_x="LMARGIN", new_y="NEXT", align='C')
 
-        # Compatible output for both fpdf and fpdf2
         buf = BytesIO()
         buf.write(pdf.output())
         return buf.getvalue()
 
     if st.button("Generate PDF Health Report", use_container_width=True):
-        with st.spinner("Generating..."):
-            pdf_bytes = generate_pdf()
-        st.download_button("Download PDF", data=pdf_bytes,
-            file_name=f"AyurHealth_{name or 'Report'}_{datetime.now().strftime('%Y%m%d')}.pdf",
-            mime="application/pdf", use_container_width=True)
+        with st.spinner("Generating your report..."):
+            try:
+                pdf_bytes = generate_pdf()
+                st.download_button(
+                    label="Download PDF",
+                    data=pdf_bytes,
+                    file_name=f"AyurHealth_{name or 'Report'}_{datetime.now().strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+                st.success("PDF ready! Click Download PDF above.")
+            except Exception as e:
+                st.error(f"PDF error: {e}")
 
     st.markdown("""
     <div class="wellness">
         🌿 Stay healthy, be happy, take care 😊<br>
         <span style='font-size:0.9rem;font-weight:400;opacity:0.85'>
-        Ayurveda treats the whole person — body, mind, and spirit.
+        Ayurveda treats the whole person - body, mind, and spirit.
         </span>
     </div>""", unsafe_allow_html=True)
+
     st.caption("Disclaimer: For educational purposes only. Always consult a certified medical professional.")
 
+# ── Landing page (before prediction) ─────────────────────
 else:
-    st.info("👈 Fill in your details in the sidebar and click Predict and Recommend")
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Diseases","10 conditions")
-    c2.metric("Model","XGBoost")
-    c3.metric("Doshas","Vata · Pitta · Kapha")
-    c4.metric("Report","PDF download")
+    st.info("Fill in your details in the sidebar and click Predict and Recommend")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Diseases",  "10 conditions")
+    c2.metric("Model",     "XGBoost")
+    c3.metric("Doshas",    "Vata / Pitta / Kapha")
+    c4.metric("Report",    "PDF download")
+
     st.markdown("""
     ### 10 Diseases Covered
     | Disease | Key Indicators |
@@ -455,5 +448,11 @@ else:
     | Migraine | High stress, headache, female skew |
     | Arthritis | Older age, high BMI, joint pain |
     """)
+
     if model is None:
-        st.warning("Model files not found. Upload all .pkl and .json files to GitHub.")
+        st.warning(
+            "Model files not found. "
+            "Make sure these files are uploaded to your GitHub repo: "
+            "disease_model.pkl, scaler.pkl, le_gender.pkl, "
+            "le_disease.pkl, disease_classes.json, feature_cols.json"
+        )

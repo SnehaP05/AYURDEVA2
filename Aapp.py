@@ -9,7 +9,12 @@ import plotly.graph_objects as go
 import joblib, json, os
 from io import BytesIO
 from datetime import datetime
-from fpdf import FPDF
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from dosha_engine import (identify_dosha, get_dosha_for_disease,
                            get_recommendation, DOSHA_INFO)
 
@@ -291,116 +296,152 @@ if predict_btn:
     st.header("Health Report")
 
     def generate_pdf():
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_auto_page_break(auto=True, margin=15)
+        buf = BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4,
+                                rightMargin=2*cm, leftMargin=2*cm,
+                                topMargin=2*cm, bottomMargin=2*cm)
+        styles = getSampleStyleSheet()
+        GREEN  = colors.HexColor('#2D6A4F')
+        WHITE  = colors.white
+        LGRAY  = colors.HexColor('#F5F5F5')
 
-        def s(text):
-            # Strip non-latin characters to avoid encoding errors
-            return str(text).encode('latin-1', 'replace').decode('latin-1')
+        title_style = ParagraphStyle('title', parent=styles['Title'],
+                                     textColor=GREEN, fontSize=20, spaceAfter=4)
+        sub_style   = ParagraphStyle('sub',   parent=styles['Normal'],
+                                     textColor=colors.grey, fontSize=10,
+                                     alignment=TA_CENTER, spaceAfter=12)
+        body_style  = ParagraphStyle('body',  parent=styles['Normal'],
+                                     fontSize=10, spaceAfter=4)
+        item_style  = ParagraphStyle('item',  parent=styles['Normal'],
+                                     fontSize=10, leftIndent=12, spaceAfter=3)
 
-        def write_title(text, size=16):
-            pdf.set_font("Helvetica", "B", size)
-            pdf.set_text_color(0, 0, 0)
-            pdf.cell(0, 10, s(text), ln=1, align='C')
+        def section_table(title):
+            t = Table([[Paragraph(f'<b>{title}</b>', ParagraphStyle(
+                'sh', parent=styles['Normal'], textColor=WHITE, fontSize=12
+            ))]], colWidths=[17*cm])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), GREEN),
+                ('TOPPADDING',    (0,0), (-1,-1), 5),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                ('LEFTPADDING',   (0,0), (-1,-1), 8),
+            ]))
+            return t
 
-        def write_section(text):
-            pdf.set_fill_color(45, 106, 79)
-            pdf.set_text_color(255, 255, 255)
-            pdf.set_font("Helvetica", "B", 12)
-            pdf.cell(0, 8, s("  " + text), ln=1, fill=True)
-            pdf.set_text_color(0, 0, 0)
-            pdf.ln(1)
+        def info_table(rows_data):
+            table_rows = []
+            for label, value in rows_data:
+                table_rows.append([
+                    Paragraph(f'<b>{label}:</b>', body_style),
+                    Paragraph(str(value), body_style)
+                ])
+            t = Table(table_rows, colWidths=[6*cm, 11*cm])
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), LGRAY),
+                ('ROWBACKGROUNDS', (0,0), (-1,-1), [WHITE, LGRAY]),
+                ('TOPPADDING',    (0,0), (-1,-1), 4),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ('LEFTPADDING',   (0,0), (-1,-1), 6),
+                ('GRID', (0,0), (-1,-1), 0.3, colors.lightgrey),
+            ]))
+            return t
 
-        def write_row(label, value):
-            pdf.set_font("Helvetica", "B", 10)
-            pdf.cell(65, 7, s(label + ":"), ln=0)
-            pdf.set_font("Helvetica", "", 10)
-            pdf.cell(0, 7, s(str(value)), ln=1)
+        story = []
 
-        def write_item(text):
-            pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 6, s("  - " + text))
+        # Title
+        story.append(Paragraph("AyurHealth AI", title_style))
+        story.append(Paragraph("Personal Health Report", title_style))
+        story.append(Paragraph(
+            f"Generated: {datetime.now().strftime('%d %b %Y, %H:%M')}",
+            sub_style))
 
-        # Title block
-        write_title("AyurHealth AI - Personal Health Report", 18)
-        pdf.set_font("Helvetica", "", 10)
-        pdf.set_text_color(100, 100, 100)
-        pdf.cell(0, 6, s(f"Generated: {datetime.now().strftime('%d %b %Y, %H:%M')}"), ln=1, align='C')
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(4)
+        # Patient info
+        story.append(section_table("Patient Information"))
+        story.append(info_table([
+            ("Name",     name or "Not provided"),
+            ("Age",      f"{age} years"),
+            ("Gender",   gender),
+            ("Location", location),
+        ]))
+        story.append(Spacer(1, 10))
 
-        write_section("Patient Information")
-        write_row("Name",     name or "Not provided")
-        write_row("Age",      f"{age} years")
-        write_row("Gender",   gender)
-        write_row("Location", location)
-        pdf.ln(3)
+        # Clinical
+        story.append(section_table("Clinical Measurements"))
+        story.append(info_table([
+            ("BMI",            f"{bmi} kg/m2"),
+            ("Blood Pressure", f"{bp} mmHg"),
+            ("Blood Sugar",    f"{sugar} mg/dL"),
+            ("Cholesterol",    f"{cholesterol} mg/dL"),
+            ("Stress Level",   f"{stress} / 10"),
+        ]))
+        story.append(Spacer(1, 10))
 
-        write_section("Clinical Measurements")
-        write_row("BMI",            f"{bmi} kg/m2")
-        write_row("Blood Pressure", f"{bp} mmHg")
-        write_row("Blood Sugar",    f"{sugar} mg/dL")
-        write_row("Cholesterol",    f"{cholesterol} mg/dL")
-        write_row("Stress Level",   f"{stress} / 10")
-        pdf.ln(3)
+        # Symptoms
+        story.append(section_table("Medical History and Symptoms"))
+        story.append(info_table([
+            ("Thyroid condition", "Yes" if thyroid    else "No"),
+            ("Smoker",            "Yes" if smoking    else "No"),
+            ("Asthma",            "Yes" if asthma     else "No"),
+            ("Fatigue",           "Yes" if fatigue    else "No"),
+            ("Joint Pain",        "Yes" if joint_pain else "No"),
+            ("Headache",          "Yes" if headache   else "No"),
+            ("Nausea",            "Yes" if nausea     else "No"),
+            ("Skin Issues",       "Yes" if skin_issue else "No"),
+        ]))
+        story.append(Spacer(1, 10))
 
-        write_section("Medical History and Symptoms")
-        write_row("Thyroid condition", "Yes" if thyroid    else "No")
-        write_row("Smoker",            "Yes" if smoking    else "No")
-        write_row("Asthma",            "Yes" if asthma     else "No")
-        write_row("Fatigue",           "Yes" if fatigue    else "No")
-        write_row("Joint Pain",        "Yes" if joint_pain else "No")
-        write_row("Headache",          "Yes" if headache   else "No")
-        write_row("Nausea",            "Yes" if nausea     else "No")
-        write_row("Skin Issues",       "Yes" if skin_issue else "No")
-        pdf.ln(3)
+        # Prediction
+        story.append(section_table("Prediction Results"))
+        story.append(info_table([
+            ("Predicted Disease", predicted_disease),
+            ("Confidence",        f"{confidence:.1f}%"),
+            ("Dominant Dosha",    final_dosha),
+            ("Dosha Elements",    dosha_info['elements']),
+        ]))
+        story.append(Spacer(1, 10))
 
-        write_section("Prediction Results")
-        write_row("Predicted Disease", predicted_disease)
-        write_row("Confidence",        f"{confidence:.1f}%")
-        write_row("Dominant Dosha",    final_dosha)
-        write_row("Dosha Elements",    dosha_info['elements'])
-        pdf.ln(3)
-
-        write_section("Recommended Herbs")
+        # Herbs
+        story.append(section_table("Recommended Herbs"))
         for h in recommendation['herbs']:
-            write_item(h)
-        pdf.ln(2)
+            story.append(Paragraph(f"• {h}", item_style))
+        story.append(Spacer(1, 8))
 
-        write_section("Remedy Preparation")
-        pdf.set_font("Helvetica", "", 10)
-        pdf.multi_cell(0, 6, s(recommendation['remedy']))
-        pdf.ln(2)
+        # Remedy
+        story.append(section_table("Remedy Preparation"))
+        story.append(Paragraph(recommendation['remedy'], body_style))
+        story.append(Spacer(1, 8))
 
-        write_section("Diet Plan")
+        # Diet
+        story.append(section_table("Diet Plan"))
         for t in recommendation['diet']:
-            write_item(t)
-        pdf.ln(2)
+            story.append(Paragraph(f"• {t}", item_style))
+        story.append(Spacer(1, 8))
 
-        write_section("Yoga and Exercise")
+        # Yoga
+        story.append(section_table("Yoga and Exercise"))
         for p in recommendation['yoga']:
-            write_item(p)
-        pdf.ln(2)
+            story.append(Paragraph(f"• {p}", item_style))
+        story.append(Spacer(1, 8))
 
-        write_section("Lifestyle Tips")
-        for t in recommendation['lifestyle']:
-            write_item(t)
-        pdf.ln(5)
+        # Lifestyle
+        story.append(section_table("Lifestyle Tips"))
+        for tip in recommendation['lifestyle']:
+            story.append(Paragraph(f"• {tip}", item_style))
+        story.append(Spacer(1, 16))
 
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.set_text_color(45, 106, 79)
-        pdf.cell(0, 10, "Stay healthy, be happy, take care!", ln=1, align='C')
-        pdf.set_font("Helvetica", "I", 8)
-        pdf.set_text_color(150, 150, 150)
-        pdf.cell(0, 6, "Disclaimer: AI-generated for informational purposes only.", ln=1, align='C')
-        pdf.cell(0, 6, "Always consult a certified medical professional.", ln=1, align='C')
+        # Footer
+        footer_style = ParagraphStyle('footer', parent=styles['Normal'],
+                                      textColor=GREEN, fontSize=13,
+                                      alignment=TA_CENTER, fontName='Helvetica-Bold')
+        disc_style   = ParagraphStyle('disc', parent=styles['Normal'],
+                                      textColor=colors.grey, fontSize=8,
+                                      alignment=TA_CENTER)
+        story.append(Paragraph("Stay healthy, be happy, take care!", footer_style))
+        story.append(Spacer(1, 6))
+        story.append(Paragraph("Disclaimer: AI-generated for informational purposes only. "
+                                "Always consult a certified medical professional.", disc_style))
 
-        # Works on ALL versions of fpdf / fpdf2
-        result = pdf.output(dest='S')
-        if isinstance(result, str):
-            return result.encode('latin-1')
-        return bytes(result)
+        doc.build(story)
+        return buf.getvalue()
 
     if st.button("Generate PDF Health Report", use_container_width=True):
         with st.spinner("Generating your report..."):
@@ -413,6 +454,7 @@ if predict_btn:
                     mime="application/pdf",
                     use_container_width=True
                 )
+
                 st.success("PDF ready! Click Download PDF above.")
             except Exception as e:
                 st.error(f"PDF error: {e}")
